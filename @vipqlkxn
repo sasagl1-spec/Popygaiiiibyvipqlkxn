@@ -1,0 +1,115 @@
+from .. import loader, utils
+from telethon.tl.types import Message
+import logging
+
+logger = logging.getLogger(__name__)
+
+@loader.tds
+class RepeatModuleMod(loader.Module):
+    """Модуль для повторения сообщений за пользователем"""
+    
+    strings = {
+        "name": "RepeatBot",
+        "active": "✅ Повторение активно для пользователя: {}",
+        "stopped": "❌ Повторение остановлено",
+        "no_user": "❌ Укажите username пользователя",
+        "not_found": "❌ Пользователь не найден в этом чате",
+        "no_active": "❌ Нет активного повторения"
+    }
+    
+    def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "target_user",
+                None,
+                "Целевой пользователь для повторения",
+                validator=loader.validators.String()
+            ),
+            loader.ConfigValue(
+                "is_active",
+                False,
+                "Активно ли повторение",
+                validator=loader.validators.Boolean()
+            )
+        )
+    
+    @loader.command(ru_doc="Начать повторение за пользователем")
+    async def repeatcmd(self, message: Message):
+        """[username] - Начать повторять за пользователем"""
+        args = utils.get_args_raw(message)
+        
+        if not args:
+            await utils.answer(message, self.strings["no_user"])
+            return
+        
+        # Убираем @ если есть
+        target_username = args.lstrip('@')
+        
+        self.config["target_user"] = target_username
+        self.config["is_active"] = True
+        
+        await utils.answer(
+            message,
+            self.strings["active"].format(target_username)
+        )
+        logger.info(f"Repeat activated for: {target_username}")
+    
+    @loader.command(ru_doc="Остановить повторение")
+    async def stoprepeatcmd(self, message: Message):
+        """Остановить повторение"""
+        self.config["is_active"] = False
+        await utils.answer(message, self.strings["stopped"])
+        logger.info("Repeat stopped")
+    
+    @loader.command(ru_doc="Статус повторения")
+    async def repeatstatuscmd(self, message: Message):
+        """Показать статус повторения"""
+        if self.config["is_active"] and self.config["target_user"]:
+            status = self.strings["active"].format(self.config["target_user"])
+        else:
+            status = self.strings["no_active"]
+        
+        await utils.answer(message, f"🦜 Статус повторения:\n{status}")
+    
+    @loader.watcher()
+    async def message_watcher(self, message: Message):
+        """Наблюдатель за сообщениями"""
+        if not self.config["is_active"] or not self.config["target_user"]:
+            return
+        
+        # Проверяем, что сообщение от целевого пользователя
+        if not message.sender:
+            return
+        
+        user_username = getattr(message.sender, 'username', None)
+        if not user_username:
+            return
+        
+        if user_username.lower() == self.config["target_user"].lower():
+            # Повторяем сообщение
+            try:
+                if message.text:
+                    await message.respond(message.text)
+                    logger.info(f"Repeated message: {message.text[:50]}...")
+                elif message.media:
+                    await message.respond(file=message.media)
+                    logger.info("Repeated media message")
+            except Exception as e:
+                logger.error(f"Repeat error: {e}")
+    
+    @loader.command(ru_doc="Повторить конкретное сообщение")
+    async def repeatthiscmd(self, message: Message):
+        """[reply] - Повторить конкретное сообщение"""
+        reply = await message.get_reply_message()
+        if not reply:
+            await utils.answer(message, "❌ Ответьте на сообщение для повторения")
+            return
+        
+        try:
+            if reply.text:
+                await message.respond(reply.text)
+            elif reply.media:
+                await message.respond(file=reply.media)
+            await message.delete()
+        except Exception as e:
+            await utils.answer(message, f"❌ Ошибка: {e}")
